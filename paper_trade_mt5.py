@@ -22,6 +22,8 @@ from config import (
     SPREAD_PIPS, LEVERAGE, INITIAL_BALANCE, RAPID_BE_ATR_MULT,
 )
 
+os.makedirs("logs", exist_ok=True)
+
 logging.basicConfig(
     filename="logs/paper_trade_mt5.log",
     level=logging.INFO,
@@ -34,7 +36,6 @@ broker = MT5Broker()
 trade_log = []
 LIVE_STATE_FILE = "logs/live_state.json"
 LIVE_TRADE_FILE = "logs/paper_trades_live.csv"
-os.makedirs("logs", exist_ok=True)
 
 
 def pip_size(sym):
