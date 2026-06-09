@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Live Trading Monitor — EURUSD Rapid Scalper
+Live Trading Monitor — BTCUSD Rapid M5 Scalper
 Fetches real data from Yahoo Finance, computes Rapid signals, shows dashboard.
 """
 import sys, os
@@ -56,7 +56,8 @@ def fetch_latest_m5(symbol: str, bars: int = 200) -> pd.DataFrame:
 def print_header():
     t = datetime.now(timezone.utc)
     print(f"\n{'='*TERM_WIDTH}")
-    print(f"  EURUSD Rapid Scalper  |  {t.strftime('%H:%M')} UTC  |  24/7")
+    tz = "UTC"
+    print(f"  BTCUSD Rapid M5  |  {t.strftime('%H:%M')} {tz}  |  24/7")
     print(f"{'='*TERM_WIDTH}")
 
 
@@ -113,20 +114,9 @@ def print_daily(broker, daily_trades, daily_start, session_start):
 
 def compute_rapid_signal(df):
     pa_score = compute_m5_score(df)
-    last = df.iloc[-1]
-    adx_val = float(last.get("adx", 0) or 0)
-    price = float(last["close"])
-    ema50 = float(last.get("ema_50", price))
-
-    if abs(pa_score) < 0.01:
+    adx_val = float(df.iloc[-1].get("adx", 0) or 0)
+    if abs(pa_score) < RAPID_PA_THRESHOLD:
         return "SKIP", pa_score, adx_val
-    if adx_val < 12:
-        return "SKIP", pa_score, adx_val
-    if pa_score > 0 and price <= ema50:
-        return "SKIP", pa_score, adx_val
-    if pa_score < 0 and price >= ema50:
-        return "SKIP", pa_score, adx_val
-
     direction = "BUY" if pa_score > 0 else "SELL"
     return direction, pa_score, adx_val
 

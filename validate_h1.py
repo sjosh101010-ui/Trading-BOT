@@ -1,10 +1,12 @@
 """
-Multi-Year H1 Validation — BTCUSD
-Resamples M5 → H1, then runs backtest for all strategies over the full period.
+Multi-Year H1 Validation & PA Score Test — EURUSD
+Resamples M5 → H1, validates PA score predictive power on H1,
+then runs backtest for all strategies over the full period.
 
 Usage:
   python validate_h1.py                              # Full run
-  python validate_h1.py --strategy hc                # Single strategy
+  python validate_h1.py --strategy rapid             # Single strategy
+  python validate_h1.py --pa-only                    # Only validate PA score
   python validate_h1.py --walk-forward               # Walk-forward segments
   python validate_h1.py --save-h1                    # Save resampled H1 CSV
 """
@@ -17,6 +19,8 @@ import numpy as np
 from datetime import datetime, timezone
 
 from data.resample import load_and_resample, load_m5_csv
+from analysis.feature_engineering import add_indicators
+from analysis.m5_scalper import compute_m5_score
 from backtest.runner import backtest
 from backtest.metrics import calculate_metrics, print_metrics
 from config import INITIAL_BALANCE, SYMBOLS
@@ -45,6 +49,64 @@ def load_h1_data(save_h1: bool = False) -> pd.DataFrame:
     return load_and_resample(str(m5_csv), save_h1=save_h1)
 
 
+def validate_pa_score(df: pd.DataFrame):
+    """Validate PA score predictive power on H1 data."""
+    print(f"\n{'='*55}")
+    print(f"  PA Score Validation on H1")
+    print(f"  Data: {len(df):,} candles ({df.index[0]} to {df.index[-1]})")
+    print(f"{'='*55}")
+
+    df = add_indicators(df)
+    scores = []
+    n = len(df)
+    lookback = 60
+
+    for i in range(lookback, n - 1):
+        window = df.iloc[: i + 1]
+        score = compute_m5_score(window)
+        next_ret = df.iloc[i + 1]["close"] - df.iloc[i]["close"]
+        scores.append({
+            "score": score,
+            "next_up": 1 if next_ret > 0 else 0,
+            "next_ret": next_ret,
+        })
+
+    scores_df = pd.DataFrame(scores)
+    total = len(scores_df)
+    correct = ((scores_df["score"] > 0) & (scores_df["next_up"] == 1)) | \
+              ((scores_df["score"] < 0) & (scores_df["next_up"] == 0))
+    base_accuracy = correct.sum() / total
+
+    from scipy import stats as scipy_stats
+    z = (base_accuracy - 0.5) / np.sqrt(0.5 * 0.5 / total)
+    p_val = 2 * (1 - scipy_stats.norm.cdf(abs(z))) if total > 0 else 1.0
+
+    print(f"\n  Overall PA Score Accuracy:")
+    print(f"  Total predictions: {total}")
+    print(f"  Base accuracy:     {base_accuracy:.4f} ({base_accuracy*100:.2f}%)")
+    print(f"  Z-score:           {z:.4f}")
+    print(f"  P-value:           {p_val:.6f}")
+
+    print(f"\n  Accuracy by Threshold:")
+    print(f"  {'Threshold':>10s} {'Signals':>8s} {'Correct':>8s} {'Accuracy':>10s}"
+          f" {'Z-score':>8s} {'P-val':>10s}")
+    print(f"  {'─'*10} {'─'*8} {'─'*8} {'─'*10} {'─'*8} {'─'*10}")
+
+    for thresh in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]:
+        subset = scores_df[scores_df["score"].abs() >= thresh]
+        if len(subset) < 10:
+            continue
+        sub_correct = ((subset["score"] > 0) & (subset["next_up"] == 1)) | \
+                      ((subset["score"] < 0) & (subset["next_up"] == 0))
+        acc = sub_correct.sum() / len(subset)
+        z_sub = (acc - 0.5) / np.sqrt(0.5 * 0.5 / len(subset))
+        p_sub = 2 * (1 - scipy_stats.norm.cdf(abs(z_sub)))
+        print(f"  {thresh:>8.1f}  {len(subset):>8d} {sub_correct.sum():>8d} {acc:>8.4f}  "
+              f"{z_sub:>+7.2f}  {p_sub:.6f}")
+
+    return scores_df
+
+
 def run_strategy(df: pd.DataFrame, strategy: str, balance: float) -> dict:
     label = {"m5": "M5 Scalper", "pa": "Price Action", "hc": "High Conviction",
              "mr": "Mean Reversion", "rapid": "Rapid M5 Scalper"}.get(strategy, strategy)
@@ -58,11 +120,11 @@ def run_strategy(df: pd.DataFrame, strategy: str, balance: float) -> dict:
 
 
 def run_all_strategies(df: pd.DataFrame):
-    strategies = ["m5", "hc", "pa", "mr"]
+    strategies = ["rapid", "m5", "hc", "pa", "mr"]
     results = []
 
     print(f"\n{'='*55}")
-    print(f"  H1 Validation — {len(df):,} candles")
+    print(f"  H1 Backtest — {len(df):,} candles")
     print(f"  Period: {df.index[0]} → {df.index[-1]}")
     print(f"{'='*55}")
 
@@ -165,23 +227,30 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="H1 Multi-Year Validation")
     parser.add_argument("--strategy", type=str, default=None,
-                        choices=["m5", "pa", "hc", "mr", None])
+                        choices=["m5", "pa", "hc", "mr", "rapid", None])
     parser.add_argument("--save-h1", action="store_true", help="Save resampled H1 CSV")
     parser.add_argument("--walk-forward", action="store_true",
                         help="Run walk-forward validation")
+    parser.add_argument("--pa-only", action="store_true",
+                        help="Only validate PA score (no backtest)")
     parser.add_argument("--balance", type=float, default=INITIAL_BALANCE)
     args = parser.parse_args()
 
     df = load_h1_data(save_h1=args.save_h1)
 
+    if args.pa_only:
+        validate_pa_score(df)
+        return
+
     if args.walk_forward:
-        strat = args.strategy or "m5"
+        strat = args.strategy or "rapid"
         run_walk_forward(df, strategy=strat)
     elif args.strategy:
         metrics = run_strategy(df, args.strategy, args.balance)
         if metrics and "error" not in metrics:
             print_metrics(metrics)
     else:
+        validate_pa_score(df)
         run_all_strategies(df)
 
 

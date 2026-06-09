@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from analysis.feature_engineering import add_indicators, compute_trend_score
 from analysis.price_action import compute_pa_score, detect_sr_zone
-from analysis.m5_scalper import compute_m5_score, check_price_divergence
+from analysis.m5_scalper import compute_m5_score
 
 from analysis.mean_reversion import compute_mr_score
 from analysis.ml_model import predict, XGB_SYMBOLS
@@ -252,23 +252,11 @@ def backtest(
             if symbol in open_positions:
                 continue
 
-            last = window.iloc[-1]
-            price = last["close"]
-            ema50 = last.get("ema_50", price)
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
             if atr <= 0:
                 continue
 
             if abs(pa_score) < RAPID_PA_THRESHOLD:
-                continue
-
-            adx_val = last.get("adx", 0)
-            if adx_val < 12:
-                continue
-
-            if pa_score > 0 and not (price > ema50):
-                continue
-            if pa_score < 0 and not (price < ema50):
                 continue
 
             direction = "BUY" if pa_score > 0 else "SELL"
@@ -280,7 +268,6 @@ def backtest(
                 "tp_mult": tp_mult,
                 "sl_mult": RAPID_SL_MULT,
                 "from_hc": True,
-                "adx_entry": adx_val,
             }
             continue
 

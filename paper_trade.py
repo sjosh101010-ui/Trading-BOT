@@ -18,7 +18,7 @@ from analysis.m5_scalper import compute_m5_score
 from risk.lot_sizer import compute_lot_size_sim
 from execution.simplefx_broker import SimpleFXBroker
 from config import (
-    SYMBOLS, RAPID_SL_MULT, RAPID_TP_MULT,
+    SYMBOLS, RAPID_SL_MULT, RAPID_TP_MULT, RAPID_PA_THRESHOLD,
     SPREAD_PIPS, LEVERAGE, INITIAL_BALANCE, RAPID_BE_ATR_MULT,
 )
 
@@ -85,18 +85,8 @@ def fetch_m5(symbol, bars=300):
 
 def compute_rapid_signal(df):
     pa_score = compute_m5_score(df)
-    last = df.iloc[-1]
-    adx_val = float(last.get("adx", 0) or 0)
-    price = float(last["close"])
-    ema50 = float(last.get("ema_50", price))
-
-    if abs(pa_score) < 0.01:
-        return None, pa_score, adx_val
-    if adx_val < 12:
-        return None, pa_score, adx_val
-    if pa_score > 0 and price <= ema50:
-        return None, pa_score, adx_val
-    if pa_score < 0 and price >= ema50:
+    adx_val = float(df.iloc[-1].get("adx", 0) or 0)
+    if abs(pa_score) < RAPID_PA_THRESHOLD:
         return None, pa_score, adx_val
     return ("BUY" if pa_score > 0 else "SELL"), pa_score, adx_val
 

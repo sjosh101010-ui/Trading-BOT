@@ -5,66 +5,66 @@ import numpy as np
 def compute_m5_score(df: pd.DataFrame) -> float:
     last = df.iloc[-1]
     price = last["close"]
-    rsi = last["rsi"]
-    bb_upper = last["bb_upper"]
-    bb_lower = last["bb_lower"]
-    bb_mid = last["bb_mid"]
-    ema8 = last["ema_8"]
-    ema21 = last["ema_21"]
-    ema50 = last["ema_50"]
     atr_val = last["atr"]
-
-    if atr_val <= 0 or pd.isna(bb_lower) or pd.isna(bb_upper):
+    if atr_val <= 0:
         return 0.0
 
+    n = len(df)
+    rsi = last.get("rsi", 50)
+
+    if n < 3:
+        return 0.0
+
+    ret1 = (price - df.iloc[-2]["close"]) / atr_val
+    ret2 = (df.iloc[-2]["close"] - df.iloc[-3]["close"]) / atr_val
+    extend = ret1 + ret2 * 0.5
+
+    vol_series = df["atr"]
+    vol_median = vol_series.rolling(50).median().iloc[-1] if n >= 50 else atr_val
+    vol_ratio = atr_val / vol_median if vol_median > 0 else 1.0
+    if vol_ratio < 0.6 or vol_ratio > 2.0:
+        return 0.0
+
+    max_range = (df["high"].iloc[-20:].max() - df["low"].iloc[-20:].min()) / atr_val if n >= 20 else 5.0
+    pos = (price - df["low"].iloc[-20:].min()) / (df["high"].iloc[-20:].max() - df["low"].iloc[-20:].min()) if n >= 20 and max_range > 0 else 0.5
+
+    at_top = pos > 0.85
+    at_bottom = pos < 0.15
+    overbought_rsi = rsi > 70
+    oversold_rsi = rsi < 30
+    extended_up = extend > 0.8
+    extended_down = extend < -0.8
+
+    strong_buy = oversold_rsi and extended_down
+    strong_sell = overbought_rsi and extended_up
+    mod_buy = at_bottom and extended_down
+    mod_sell = at_top and extended_up
+
     score = 0.0
-
-    is_uptrend = price > ema50
-    is_downtrend = price < ema50
-    no_trend = not is_uptrend and not is_downtrend
-
-    if rsi < 30:
-        score += 0.5
-    elif rsi < 40:
-        score += 0.25
-    elif rsi > 70:
-        score -= 0.5
-    elif rsi > 60:
-        score -= 0.25
-
-    bb_upper_dist = (bb_upper - price) / atr_val
-    bb_lower_dist = (price - bb_lower) / atr_val
-
-    if bb_lower_dist < 0.3 and rsi < 45 and not is_downtrend:
-        score += 0.4
-    elif bb_lower_dist < 0.5 and rsi < 40 and not is_downtrend:
-        score += 0.25
-
-    if bb_upper_dist < 0.3 and rsi > 55 and not is_uptrend:
-        score -= 0.4
-    elif bb_upper_dist < 0.5 and rsi > 60 and not is_uptrend:
-        score -= 0.25
-
-    ema_dist = (price - ema21) / atr_val
-    if is_uptrend and -1.5 < ema_dist < -0.3:
+    if strong_buy:
+        score += 0.6
+    elif oversold_rsi:
         score += 0.3
-    if is_downtrend and 0.3 < ema_dist < 1.5:
+    elif extended_down:
+        score += 0.25
+    elif mod_buy:
+        score += 0.2
+
+    if strong_sell:
+        score -= 0.6
+    elif overbought_rsi:
         score -= 0.3
+    elif extended_up:
+        score -= 0.25
+    elif mod_sell:
+        score -= 0.2
 
-    if len(df) > 5:
-        range_high = df["high"].iloc[-6:-1].max()
-        range_low = df["low"].iloc[-6:-1].min()
-        range_width = (range_high - range_low) / atr_val
-
-        if price > range_high and range_width < 1.5 and is_uptrend:
-            score += 0.3
-        elif price < range_low and range_width < 1.5 and is_downtrend:
-            score -= 0.3
-
-    if is_uptrend and score > 0:
-        score *= 1.2
-    elif is_downtrend and score < 0:
-        score *= 1.2
+    if n >= 5:
+        cls = df["close"].iloc[-6:-1]
+        if all(cls.iloc[i] > cls.iloc[i-1] for i in range(1, len(cls))):
+            score -= 0.15
+        elif all(cls.iloc[i] < cls.iloc[i-1] for i in range(1, len(cls))):
+            score += 0.15
 
     return round(max(-1.0, min(1.0, score)), 4)
 
