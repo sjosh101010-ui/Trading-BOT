@@ -55,20 +55,31 @@ class MT5Broker:
             }
         return result
 
-    def open_market_order(self, symbol, side, volume, sl_price=None, tp_price=None):
+    def open_market_order(self, symbol, side, volume, sl_price=None, tp_price=None,
+                          sl_distance=None, tp_distance=None):
         self._ensure_init()
         order_type = mt5.ORDER_TYPE_BUY if side.upper() == "BUY" else mt5.ORDER_TYPE_SELL
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return {"success": False, "error": "Cannot get tick"}
+        price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
+
+        if sl_distance is not None:
+            sl_price = price - sl_distance if order_type == mt5.ORDER_TYPE_BUY else price + sl_distance
+        if tp_distance is not None:
+            tp_price = price + tp_distance if order_type == mt5.ORDER_TYPE_BUY else price - tp_distance
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": volume,
             "type": order_type,
-            "price": mt5.symbol_info_tick(symbol).ask if order_type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).bid,
+            "price": price,
             "deviation": 10,
             "magic": 123456,
             "comment": "rapid_scalper",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
         }
         if sl_price is not None:
             request["sl"] = round(sl_price, 5)

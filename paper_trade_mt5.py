@@ -105,13 +105,11 @@ def open_trade(symbol, direction, pa_score, adx_val, df, candle_time):
         return
 
     ps = pip_size(symbol)
-    spread_pts = SPREAD_PIPS * ps
-    entry_price = price + spread_pts / 2 if direction == "BUY" else price - spread_pts / 2
 
     tp_mult = RAPID_TP_MULT.get(symbol, 2.0) if isinstance(RAPID_TP_MULT, dict) else RAPID_TP_MULT
-    sl_price = entry_price - RAPID_SL_MULT * atr if direction == "BUY" else entry_price + RAPID_SL_MULT * atr
-    tp_price = entry_price + tp_mult * atr if direction == "BUY" else entry_price - tp_mult * atr
-    sl_pips = abs(entry_price - sl_price) / ps
+    sl_distance = RAPID_SL_MULT * atr
+    tp_distance = tp_mult * atr
+    sl_pips = sl_distance / ps
 
     info = broker.get_account_info()
     balance = info["balance"] if info else INITIAL_BALANCE
@@ -119,24 +117,25 @@ def open_trade(symbol, direction, pa_score, adx_val, df, candle_time):
     if lot <= 0:
         return
 
-    digits = broker.get_digits(symbol)
     result = broker.open_market_order(
         symbol, direction, lot,
-        sl_price=round(sl_price, digits),
-        tp_price=round(tp_price, digits),
+        sl_distance=sl_distance, tp_distance=tp_distance,
     )
     if result.get("success"):
         trade_id = result.get("ticket")
-        logging.info(f"[{symbol}] ENTRY: {direction} {lot}L @ via MT5 id={trade_id}")
-        print(f"  >>> {symbol} ENTRY: {direction} {lot:.2f}L @ MT5 id={trade_id}")
+        actual_price = result.get("price", price)
+        act_sl = actual_price - sl_distance if direction == "BUY" else actual_price + sl_distance
+        act_tp = actual_price + tp_distance if direction == "BUY" else actual_price - tp_distance
+        logging.info(f"[{symbol}] ENTRY: {direction} {lot}L @ {actual_price:.5f} via MT5 id={trade_id}")
+        print(f"  >>> {symbol} ENTRY: {direction} {lot:.2f}L @ {actual_price:.5f} id={trade_id}")
         if trade_id:
             tracked[trade_id] = {
                 "symbol": symbol,
                 "direction": direction,
                 "lot": lot,
-                "entry_price": entry_price,
-                "sl": sl_price,
-                "tp": tp_price,
+                "entry_price": actual_price,
+                "sl": act_sl,
+                "tp": act_tp,
                 "entry_time": candle_time,
                 "adx_entry": adx_val,
             }
