@@ -66,7 +66,7 @@ class MT5Broker:
         price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
 
         if sl_distance is not None:
-            min_sl = 0.00020  # 2 pips minimum for Vantage
+            min_sl = 0.00030
             sl_distance = max(sl_distance, min_sl)
             sl_price = price - sl_distance if order_type == mt5.ORDER_TYPE_BUY else price + sl_distance
         if tp_distance is not None:
@@ -82,6 +82,7 @@ class MT5Broker:
             "magic": 123456,
             "comment": "rapid_scalper",
             "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
         if sl_price is not None:
             request["sl"] = round(sl_price, 5)
@@ -99,18 +100,21 @@ class MT5Broker:
 
     def close_position(self, symbol, volume, side, close_by_id):
         self._ensure_init()
+        mt5.symbol_select(symbol, True)
         position = mt5.positions_get(ticket=close_by_id)
         if not position:
             return False
         pos = position[0]
         order_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        tick = mt5.symbol_info_tick(symbol)
+        price = tick.bid if order_type == mt5.ORDER_TYPE_SELL else tick.ask
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": volume,
             "type": order_type,
             "position": close_by_id,
-            "price": mt5.symbol_info_tick(symbol).bid if order_type == mt5.ORDER_TYPE_SELL else mt5.symbol_info_tick(symbol).ask,
+            "price": price,
             "deviation": 10,
             "magic": 123456,
             "comment": "rapid_close",
