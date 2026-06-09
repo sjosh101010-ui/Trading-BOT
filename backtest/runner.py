@@ -140,7 +140,7 @@ def backtest(
         if i % step != 0:
             continue
 
-        window = df.iloc[: i + 1]
+        window = df.iloc[max(0, i - 500 + 1) : i + 1]
         current = df.iloc[i]
 
         if strategy == "pa":
