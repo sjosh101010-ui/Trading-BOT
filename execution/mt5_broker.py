@@ -18,7 +18,7 @@ class MT5Broker:
         if not mt5.initialize():
             raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
         self.initialized = True
-        if MT5_LOGIN and MT5_PASSWORD:
+        if MT5_LOGIN and MT5_PASSWORD and mt5.account_info() is None:
             if not mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
                 raise RuntimeError(f"MT5 login failed: {mt5.last_error()}")
 
