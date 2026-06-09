@@ -24,7 +24,7 @@ def generate_synthetic_data(symbol: str = "BTCUSD", n_candles: int = 5000) -> pd
     print(f"Generating {n_candles} synthetic M5 candles for {symbol}...")
     idx = pd.date_range(end=datetime.now(timezone.utc), periods=n_candles, freq="5min")
     base = 70000.0 if symbol == "BTCUSD" else (1.08 if "USD" in symbol else 150.0)
-    vol = base * 0.0003 if symbol == "BTCUSD" else (0.0003 if "USD" in symbol else 0.05)
+    vol = 0.002 if symbol == "BTCUSD" else 0.0003
 
     trend_cycles = 8
     cycle_len = n_candles // trend_cycles

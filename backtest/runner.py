@@ -25,25 +25,24 @@ from config import (
     STRATEGY_SESSION_MAP,
 )
 
-MAX_STRATEGIES_PER_SYMBOL = 2 # Configurable, to be added to config.py later
+MAX_STRATEGIES_PER_SYMBOL = 2  # Configurable, to be added to config.py later
+
 
 def is_strategy_allowed_at_time(strategy_name: str, current_time: pd.Timestamp) -> bool:
     session_config = STRATEGY_SESSION_MAP.get(strategy_name)
     if not session_config:
-        return True # No specific session config, allow always
+        return True  # No specific session config, allow always
 
     start_time_str = session_config["start"]
     end_time_str = session_config["end"]
 
-    # Assuming UTC for now, or that current_time is localized as needed
     start_hour = int(start_time_str.split(":")[0])
     end_hour = int(end_time_str.split(":")[0])
-    
     current_hour = current_time.hour
 
     if start_hour <= end_hour:
         return start_hour <= current_hour < end_hour
-    else: # Overnight session (e.g., 21:00 - 07:00)
+    else:  # Overnight session (e.g., 21:00 - 07:00)
         return current_hour >= start_hour or current_hour < end_hour
 
 
@@ -73,133 +72,109 @@ def backtest(
     start_idx = max(lookback, 50)
     _peak_balance[symbol] = lev_balance
 
-    candles_processed = 0
     daily_trades = 0
     daily_start_balance = lev_balance
     current_trade_date = None
-
-    balance = lev_balance
-
     pending_entry = None
 
-     for i in range(start_idx, total_candles):
-         candle_time = df.index[i]
-         current_hour = candle_time.hour
-         if not (TRADE_SESSION_START <= current_hour < TRADE_SESSION_END):
-             pending_entry = None
-             continue
-         if trade_date is not None and candle_time.date() != trade_date.date():
-             pending_entry = None
-             continue
-         if trade_start_date is not None and candle_time.date() < trade_start_date.date():
-             pending_entry = None
-             continue
+    for i in range(start_idx, total_candles):
+        candle_time = df.index[i]
+        current_hour = candle_time.hour
+        if not (TRADE_SESSION_START <= current_hour < TRADE_SESSION_END):
+            pending_entry = None
+            continue
+        if trade_date is not None and candle_time.date() != trade_date.date():
+            pending_entry = None
+            continue
+        if trade_start_date is not None and candle_time.date() < trade_start_date.date():
+            pending_entry = None
+            continue
 
-         current = df.iloc[i]
+        current = df.iloc[i]
 
-         balance += _check_sl_tp(current, open_positions, trades, df.index[i])
+        balance += _check_sl_tp(current, open_positions, trades, df.index[i])
 
-         # Handle pending entry (limit order from previous candle)
-         skip_signals = False
-         if pending_entry is not None:
-             # Check if limit order can be filled on this candle
-             limit_price = pending_entry["limit_price"]
-             direction = pending_entry["direction"]
-             high = current["high"]
-             low = current["low"]
-             
-             filled = False
-             fill_price = None
-             
-             if direction == "BUY" and high >= limit_price:
-                 filled = True
-                 fill_price = limit_price
-             elif direction == "SELL" and low <= limit_price:
-                 filled = True
-                 fill_price = limit_price
-             
-              if filled:
-                  # Execute the trade
-                  entry = pending_entry.copy()
-                  entry["entry_price"] = fill_price
-                  
-                  # Calculate SL/TP based on entry price
-                  atr = float(current["atr"]) if current["atr"] > 0 else 0.001
-                  symbol = entry["symbol"]
-                  ps = pip_size(symbol)
-                  spread_pts = SYMBOL_SPREAD_MAP.get(symbol, SPREAD_PIPS) * ps
-                  slippage_pts = SLIPPAGE_PIPS * ps
-                  
-                  if entry.get("from_hc"):
-                      sl_mult = entry.get("sl_mult", HC_SL_ATR_MULT)
-                      tp_mult = entry["tp_mult"]
-                      sl_price = fill_price - sl_mult * atr if entry["direction"] == "BUY" else fill_price + sl_mult * atr
-                      tp_price = fill_price + tp_mult * atr if entry["direction"] == "BUY" else fill_price - tp_mult * atr
-                      sl_pips = abs(entry_price - sl_price) / ps
-                  else:
-                      # Standard SL/TP calculation
-                      sl_tp = compute_sl_tp(symbol, entry["direction"], fill_price, atr)
-                      sl_price = sl_tp["sl"]
-                      tp_price = sl_tp["tp"]
-                      sl_pips = sl_tp["sl_pips"]
-                 elif entry.get("from_hc"):
-                     sl_mult = entry.get("sl_mult", HC_SL_ATR_MULT)
-                     tp_mult = entry["tp_mult"]
-                     sl_price = entry_price - sl_mult * atr if entry["direction"] == "BUY" else entry_price + sl_mult * atr
-                     tp_price = entry_price + tp_mult * atr if entry["direction"] == "BUY" else entry_price - tp_mult * atr
-                     sl_pips = abs(entry_price - sl_price) / ps
-                 else:
-                     sl_tp = compute_sl_tp(symbol, entry["direction"], entry_price, atr)
-                     sl_price = sl_tp["sl"]
-                     tp_price = sl_tp["tp"]
-                     sl_pips = sl_tp["sl_pips"]
+        # Handle pending entry (limit order from previous candle)
+        skip_signals = False
+        if pending_entry is not None:
+            limit_price = pending_entry["limit_price"]
+            direction = pending_entry["direction"]
+            high = current["high"]
+            low = current["low"]
 
-                 # Check lot size
-                 lot = compute_lot_size_sim(symbol, balance, sl_pips, entry["confidence"], price=entry_price)
-                 if lot <= 0:
-                     pending_entry = None  # Cancel order if lot size invalid
-                 else:
-                     # Check if we can open another position for this symbol (max strategies per symbol)
-                     if len(open_positions[symbol]) >= MAX_STRATEGIES_PER_SYMBOL:
-                         pending_entry = None  # Cancel order if at limit
-                     else:
-                         # Check directional exposure (simple version: don't allow same-direction pyramiding beyond 2)
-                         same_direction_count = sum(1 for p in open_positions[symbol].values() if p["direction"] == entry["direction"])
-                         if same_direction_count >= 2:  # Max 2 positions in same direction
-                             pending_entry = None  # Cancel order
-                         else:
-                             # Store the position
-                             open_positions[symbol][entry["strategy"]] = {
-                                 "direction": entry["direction"],
-                                 "strategy": entry["strategy"],
-                                 "lot": lot,
-                                 "entry_price": entry_price,
-                                 "sl": sl_price,
-                                 "tp": tp_price,
-                                 "entry_time": candle_time,  # Time of entry (when filled)
-                                 "entry_idx": i,
-                                 "adx_entry": entry.get("adx_entry", 0),
-                             }
-                             daily_trades += 1
-                 # After processing (whether successful or not), clear pending entry
-                 pending_entry = None
-                 skip_signals = True  # Skip signal generation since we just processed an order
-             else:
-                 # Order not filled, cancel it (as per blueprint: "If the market skips it, the trade is canceled")
-                 pending_entry = None
-                 skip_signals = False
+            filled = False
+            fill_price = None
 
-         # If we just filled a pending entry, skip signal generation
-         if skip_signals:
-             # Still need current for completeness, but we'll skip to the SL/TP check of next iteration
-             continue
+            if direction == "BUY" and high >= limit_price:
+                filled = True
+                fill_price = limit_price
+            elif direction == "SELL" and low <= limit_price:
+                filled = True
+                fill_price = limit_price
 
-         # Proceed with signal generation only if no pending entry was filled
+            if filled:
+                entry = pending_entry.copy()
+                entry["entry_price"] = fill_price
+
+                atr = float(current["atr"]) if current["atr"] > 0 else 0.001
+                ps = pip_size(symbol)
+                spread_pts = SYMBOL_SPREAD_MAP.get(symbol, SPREAD_PIPS) * ps
+                slippage_pts = SLIPPAGE_PIPS * ps
+
+                if entry.get("from_hc"):
+                    sl_mult = entry.get("sl_mult", HC_SL_ATR_MULT)
+                    tp_mult = entry["tp_mult"]
+                    sl_price = fill_price - sl_mult * atr if entry["direction"] == "BUY" else fill_price + sl_mult * atr
+                    tp_price = fill_price + tp_mult * atr if entry["direction"] == "BUY" else fill_price - tp_mult * atr
+                    sl_pips = abs(fill_price - sl_price) / ps
+                else:
+                    sl_tp = compute_sl_tp(symbol, entry["direction"], fill_price, atr)
+                    sl_price = sl_tp["sl"]
+                    tp_price = sl_tp["tp"]
+                    sl_pips = sl_tp["sl_pips"]
+
+                lot = compute_lot_size_sim(symbol, balance, sl_pips, entry["confidence"], price=fill_price)
+                if lot <= 0:
+                    pending_entry = None  # Cancel order if lot size invalid
+                else:
+                    if len(open_positions[symbol]) >= MAX_STRATEGIES_PER_SYMBOL:
+                        pending_entry = None  # Cancel order if at limit
+                    else:
+                        same_direction_count = sum(
+                            1 for p in open_positions[symbol].values()
+                            if p["direction"] == entry["direction"]
+                        )
+                        if same_direction_count >= 2:
+                            pending_entry = None  # Cancel order
+                        else:
+                            open_positions[symbol][entry["strategy"]] = {
+                                "symbol": symbol,
+                                "direction": entry["direction"],
+                                "strategy": entry["strategy"],
+                                "lot": lot,
+                                "entry_price": fill_price,
+                                "sl": sl_price,
+                                "tp": tp_price,
+                                "entry_time": candle_time,
+                                "entry_idx": i,
+                                "adx_entry": entry.get("adx_entry", 0),
+                            }
+                            daily_trades += 1
+
+                pending_entry = None
+                skip_signals = True
+            else:
+                # Order not filled — cancel it
+                pending_entry = None
+                skip_signals = False
+
+        if skip_signals:
+            continue
 
         if i % step != 0:
             continue
 
-        window = df.iloc[max(0, i - 500 + 1) : i + 1]
+        window = df.iloc[max(0, i - 500 + 1): i + 1]
         current = df.iloc[i]
 
         if strategy == "pa":
@@ -210,6 +185,7 @@ def backtest(
             pa_score = 0.0
         else:
             pa_score = compute_m5_score_forex(window)
+
         trend_score = compute_trend_score(window)
         ml_prob = predict(symbol, window) if strategy not in ("mr", "rapid") else 0.5
 
@@ -218,14 +194,12 @@ def backtest(
 
             if signal.direction == "SKIP":
                 continue
-
             if symbol in open_positions:
                 continue
 
             last = window.iloc[-1]
             price = last["close"]
             ema50 = last.get("ema_50", price)
-            ema21 = last.get("ema_21", price)
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
 
             is_uptrend = price > ema50
@@ -239,7 +213,6 @@ def backtest(
 
             if abs(pa_score) < HC_PA_SCORE_THRESHOLD:
                 continue
-
             if signal.direction == "BUY" and ml_prob < HC_ML_PROB_BUY:
                 continue
             if signal.direction == "SELL" and ml_prob > HC_ML_PROB_SELL:
@@ -255,10 +228,9 @@ def backtest(
                     near_sr = True
 
             tp_mult = HC_TP_ATR_MULT_NEAR_SR if near_sr else HC_TP_ATR_MULT_DEFAULT
-            # Create pending entry (limit order) - will be filled on next candle if conditions met
             pending_entry = {
                 "direction": signal.direction,
-                "limit_price": last["close"],  # Limit order at signal candle's close
+                "limit_price": last["close"],
                 "confidence": adjusted_confidence,
                 "tp_mult": tp_mult,
                 "from_hc": True,
@@ -273,12 +245,11 @@ def backtest(
                 continue
             if symbol in open_positions:
                 continue
-            direction = "BUY" if mr_score > 0 else "SELL"
 
+            direction = "BUY" if mr_score > 0 else "SELL"
             last = window.iloc[-1]
             price = last["close"]
             ema50 = last.get("ema_50", price)
-            ema21 = last.get("ema_21", price)
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
 
             is_uptrend = price > ema50
@@ -290,52 +261,6 @@ def backtest(
             if direction == "SELL" and is_uptrend:
                 mr_confidence *= 0.5
 
-            # ADX filter: skip if strong trend (already baked into mr_score, but reinforce)
-            adx_val = last.get("adx", 20)
-            if adx_val > 35:
-                continue
-
-            sr = detect_sr_zone(window)
-            near_sr = False
-             if direction == "BUY" and sr["support"]:
-                if abs(price - sr["support"]) / atr < 1.0:
-                    near_sr = True
-             if direction == "SELL" and sr["resistance"]:
-                if abs(price - sr["resistance"]) / atr < 1.0:
-                    near_sr = True
-            
-
-            tp_mult = 1.5 if near_sr else 1.0
-            # Create pending entry (limit order) - will be filled on next candle if conditions met
-            pending_entry = {
-                "direction": direction,
-                "limit_price": last["close"],  # Limit order at signal candle's close
-                "confidence": mr_confidence,
-                "tp_mult": tp_mult,
-                "strategy": "mr",
-                "symbol": symbol,
-            }
-            continue
-            if symbol in open_positions:
-                continue
-            direction = "BUY" if mr_score > 0 else "SELL"
-
-            last = window.iloc[-1]
-            price = last["close"]
-            ema50 = last.get("ema_50", price)
-            ema21 = last.get("ema_21", price)
-            atr = float(current["atr"]) if current["atr"] > 0 else 0.001
-
-            is_uptrend = price > ema50
-            is_downtrend = price < ema50
-
-            mr_confidence = min(1.0, abs(mr_score))
-            if direction == "BUY" and is_downtrend:
-                mr_confidence *= 0.5
-            if direction == "SELL" and is_uptrend:
-                mr_confidence *= 0.5
-
-            # ADX filter: skip if strong trend (already baked into mr_score, but reinforce)
             adx_val = last.get("adx", 20)
             if adx_val > 35:
                 continue
@@ -350,16 +275,15 @@ def backtest(
                     near_sr = True
 
             tp_mult = 1.5 if near_sr else 1.0
-            # Create pending entry (limit order) - will be filled on next candle if conditions met
             pending_entry = {
-                 "direction": direction,
-                 "limit_price": last["close"],  # Limit order at signal candle's close
-                 "confidence": mr_confidence,
-                 "tp_mult": tp_mult,
-                 "strategy": "mr",
-                 "symbol": symbol,
-             }
-             continue
+                "direction": direction,
+                "limit_price": last["close"],
+                "confidence": mr_confidence,
+                "tp_mult": tp_mult,
+                "strategy": "mr",
+                "symbol": symbol,
+            }
+            continue
 
         if strategy == "rapid":
             if symbol in open_positions:
@@ -368,24 +292,22 @@ def backtest(
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
             if atr <= 0:
                 continue
-
             if abs(pa_score) < RAPID_PA_THRESHOLD:
                 continue
 
             direction = "BUY" if pa_score > 0 else "SELL"
-
-              tp_mult = RAPID_TP_MULT.get(symbol, 2.0) if isinstance(RAPID_TP_MULT, dict) else RAPID_TP_MULT
-              # Create pending entry (limit order) - will be filled on next candle if conditions met
-              pending_entry = {
-                  "direction": direction,
-                  "limit_price": last["close"],  # Limit order at signal candle's close
-                  "confidence": min(1.0, abs(pa_score)),
-                  "tp_mult": tp_mult,
-                  "sl_mult": RAPID_SL_MULT,
-                  "strategy": "rapid",
-                  "symbol": symbol,
-              }
-              continue
+            last = window.iloc[-1]
+            tp_mult = RAPID_TP_MULT.get(symbol, 2.0) if isinstance(RAPID_TP_MULT, dict) else RAPID_TP_MULT
+            pending_entry = {
+                "direction": direction,
+                "limit_price": last["close"],
+                "confidence": min(1.0, abs(pa_score)),
+                "tp_mult": tp_mult,
+                "sl_mult": RAPID_SL_MULT,
+                "strategy": "rapid",
+                "symbol": symbol,
+            }
+            continue
 
         if strategy == "tf":
             if symbol in open_positions:
@@ -395,26 +317,19 @@ def backtest(
             if atr <= 0:
                 continue
 
-             tf_score = compute_tf_score(window)
-             if abs(tf_score) < 0.5:
-                 continue
-             direction = "BUY" if tf_score > 0 else "SELL"
-             # Create pending entry (limit order) - will be filled on next candle if conditions met
-             pending_entry = {
-                 "direction": direction,
-                 "limit_price": last["close"],  # Limit order at signal candle's close
-                 "confidence": min(1.0, abs(tf_score)),
-                 "from_hc": False,
-                 "strategy": "tf",
-                 "symbol": symbol,
-             }
-             continue
+            tf_score = compute_tf_score(window)
+            if abs(tf_score) < 0.5:
+                continue
 
             direction = "BUY" if tf_score > 0 else "SELL"
+            last = window.iloc[-1]
             pending_entry = {
                 "direction": direction,
+                "limit_price": last["close"],
                 "confidence": min(1.0, abs(tf_score)),
                 "from_hc": False,
+                "strategy": "tf",
+                "symbol": symbol,
             }
             continue
 
@@ -425,7 +340,6 @@ def backtest(
             last = window.iloc[-1]
             price = last["close"]
             ema50 = last.get("ema_50", price)
-            ema21 = last.get("ema_21", price)
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
             if atr <= 0:
                 continue
@@ -434,57 +348,56 @@ def backtest(
             is_downtrend = price < ema50
             adx_val = last.get("adx", 20)
 
-             # Try rapid first
-             if abs(pa_score) >= RAPID_PA_THRESHOLD:
-                 direction = "BUY" if pa_score > 0 else "SELL"
-                 rapid_conf = min(1.0, abs(pa_score))
-                 if (pa_score > 0 and is_downtrend) or (pa_score < 0 and is_uptrend):
-                     rapid_conf *= 0.5
-                 tp_mult = RAPID_TP_MULT.get(symbol, 2.0) if isinstance(RAPID_TP_MULT, dict) else RAPID_TP_MULT
-                  # Create pending entry (limit order) - will be filled on next candle if conditions met
-                  pending_entry = {
-                      "direction": direction,
-                      "limit_price": last["close"],  # Limit order at signal candle's close
-                      "confidence": rapid_conf,
-                      "tp_mult": tp_mult,
-                      "sl_mult": RAPID_SL_MULT,
-                      "adx_entry": adx_val,
-                      "strategy": "hybrid",
-                      "symbol": symbol,
-                  }
-                  continue
+            # Try rapid first
+            if abs(pa_score) >= RAPID_PA_THRESHOLD:
+                direction = "BUY" if pa_score > 0 else "SELL"
+                rapid_conf = min(1.0, abs(pa_score))
+                if (pa_score > 0 and is_downtrend) or (pa_score < 0 and is_uptrend):
+                    rapid_conf *= 0.5
+                tp_mult = RAPID_TP_MULT.get(symbol, 2.0) if isinstance(RAPID_TP_MULT, dict) else RAPID_TP_MULT
+                pending_entry = {
+                    "direction": direction,
+                    "limit_price": last["close"],
+                    "confidence": rapid_conf,
+                    "tp_mult": tp_mult,
+                    "sl_mult": RAPID_SL_MULT,
+                    "adx_entry": adx_val,
+                    "strategy": "hybrid",
+                    "symbol": symbol,
+                }
+                continue
 
-                 # Fallback to MR
-                 if abs(mr_score) >= 0.5 and adx_val <= 35:
-                     mr_direction = "BUY" if mr_score > 0 else "SELL"
-                     mr_hybrid_conf = min(1.0, abs(mr_score))
-                     if (mr_direction == "BUY" and is_downtrend) or (mr_direction == "SELL" and is_uptrend):
-                         mr_hybrid_conf *= 0.5
-                     sr = detect_sr_zone(window)
-                     near_sr = False
-                     if mr_direction == "BUY" and sr.get("support"):
-                         if abs(price - sr["support"]) / atr < 1.0:
-                             near_sr = True
-                     if mr_direction == "SELL" and sr.get("resistance"):
-                         if abs(price - sr["resistance"]) / atr < 1.0:
-                             near_sr = True
-                     mr_tp = 1.5 if near_sr else 1.0
-                     # Create pending entry (limit order) - will be filled on next candle if conditions met
-                     pending_entry = {
-                         "direction": mr_direction,
-                         "limit_price": last["close"],  # Limit order at signal candle's close
-                         "confidence": mr_hybrid_conf,
-                         "tp_mult": mr_tp,
-                         "strategy": "hybrid",
-                         "symbol": symbol,
-                     }
-                     continue
+            # Fallback to MR
+            mr_score = compute_mr_score(window)
+            if abs(mr_score) >= 0.5 and adx_val <= 35:
+                mr_direction = "BUY" if mr_score > 0 else "SELL"
+                mr_hybrid_conf = min(1.0, abs(mr_score))
+                if (mr_direction == "BUY" and is_downtrend) or (mr_direction == "SELL" and is_uptrend):
+                    mr_hybrid_conf *= 0.5
+                sr = detect_sr_zone(window)
+                near_sr = False
+                if mr_direction == "BUY" and sr.get("support"):
+                    if abs(price - sr["support"]) / atr < 1.0:
+                        near_sr = True
+                if mr_direction == "SELL" and sr.get("resistance"):
+                    if abs(price - sr["resistance"]) / atr < 1.0:
+                        near_sr = True
+                mr_tp = 1.5 if near_sr else 1.0
+                pending_entry = {
+                    "direction": mr_direction,
+                    "limit_price": last["close"],
+                    "confidence": mr_hybrid_conf,
+                    "tp_mult": mr_tp,
+                    "strategy": "hybrid",
+                    "symbol": symbol,
+                }
+                continue
 
+        # Default fallback signal path
         signal = fuse(symbol, pa_score, ml_prob, 0.0, trend_score)
 
         if symbol in open_positions:
             continue
-
         if signal.direction == "SKIP":
             continue
 
@@ -497,7 +410,6 @@ def backtest(
         last = window.iloc[-1]
         price = last["close"]
         ema50 = last.get("ema_50", price)
-        ema21 = last.get("ema_21", price)
 
         is_uptrend = price > ema50
         is_downtrend = price < ema50
@@ -512,15 +424,12 @@ def backtest(
         if atr <= 0:
             continue
 
-        # Create pending entry (limit order) - will be filled on next candle if conditions met
-        from_mr_flag = (strategy == "mr")
-        from_hc_flag = (strategy == "hc")
         pending_entry = {
             "direction": signal.direction,
-            "limit_price": last["close"],  # Limit order at signal candle's close
+            "limit_price": last["close"],
             "confidence": adjusted_confidence,
-            "from_mr": from_mr_flag,
-            "from_hc": from_hc_flag,
+            "from_mr": (strategy == "mr"),
+            "from_hc": (strategy == "hc"),
             "strategy": strategy,
             "symbol": symbol,
         }
@@ -542,6 +451,7 @@ CONTRACT_SIZE = {
     "EURUSD": 100_000,
 }
 
+
 def _pnl_to_usd(pnl: float, symbol: str, entry: float, exit_price: float) -> float:
     if symbol.endswith("USD"):
         return pnl
@@ -553,7 +463,7 @@ def _pnl_to_usd(pnl: float, symbol: str, entry: float, exit_price: float) -> flo
 
 def _check_sl_tp(current_row, open_positions, trades, current_time) -> float:
     total_pnl = 0.0
-    for sym, strategies in open_positions.items():
+    for sym, strategies in list(open_positions.items()):
         for strategy_name, pos in list(strategies.items()):
             direction = pos["direction"]
             high = current_row["high"]
@@ -575,7 +485,10 @@ def _check_sl_tp(current_row, open_positions, trades, current_time) -> float:
                 hit_tp = low <= tp
 
             if hit_sl:
-                exit_price = sl - spread_pts / 2 - slippage_pts if direction == "BUY" else sl + spread_pts / 2 + slippage_pts
+                exit_price = (
+                    sl - spread_pts / 2 - slippage_pts if direction == "BUY"
+                    else sl + spread_pts / 2 + slippage_pts
+                )
                 pnl = (exit_price - entry) * lot * csize
                 if direction == "SELL":
                     pnl = -pnl
@@ -586,7 +499,10 @@ def _check_sl_tp(current_row, open_positions, trades, current_time) -> float:
                 if not strategies:
                     del open_positions[sym]
             elif hit_tp:
-                exit_price = tp + spread_pts / 2 + slippage_pts if direction == "BUY" else tp - spread_pts / 2 - slippage_pts
+                exit_price = (
+                    tp + spread_pts / 2 + slippage_pts if direction == "BUY"
+                    else tp - spread_pts / 2 - slippage_pts
+                )
                 pnl = (exit_price - entry) * lot * csize
                 if direction == "SELL":
                     pnl = -pnl
@@ -620,9 +536,15 @@ def _close_trade(pos, exit_price, trades, current_time, status, pnl):
     return pnl
 
 
-def run_backtest(csv_path: str = None, df: pd.DataFrame = None, symbol: str = "BTCUSD",
-                 strategy: str = "m5", trade_date: pd.Timestamp = None,
-                 trade_start_date: pd.Timestamp = None, **kwargs):
+def run_backtest(
+    csv_path: str = None,
+    df: pd.DataFrame = None,
+    symbol: str = "BTCUSD",
+    strategy: str = "m5",
+    trade_date: pd.Timestamp = None,
+    trade_start_date: pd.Timestamp = None,
+    **kwargs,
+):
     if csv_path is not None:
         df = pd.read_csv(csv_path, parse_dates=True, index_col=0)
     elif df is None:
@@ -634,19 +556,28 @@ def run_backtest(csv_path: str = None, df: pd.DataFrame = None, symbol: str = "B
         raise ValueError(f"Missing columns: {missing}")
     df.columns = df.columns.str.lower()
 
-    strategy_names = {"m5": "M5 Scalper", "pa": "Price Action", "hc": "High Conviction", "mr": "Mean Reversion", "rapid": "Rapid M5 Scalper", "tf": "Trend Follow"}
+    strategy_names = {
+        "m5": "M5 Scalper",
+        "pa": "Price Action",
+        "hc": "High Conviction",
+        "mr": "Mean Reversion",
+        "rapid": "Rapid M5 Scalper",
+        "tf": "Trend Follow",
+    }
     strategy_name = strategy_names.get(strategy, strategy)
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  Strategy: {strategy_name}")
     print(f"  Backtesting {symbol}")
     print(f"  Data: {len(df)} candles ({df.index[0]} to {df.index[-1]})")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     kwargs.setdefault("strategy", strategy)
-    trades, metrics = backtest(df, symbol=symbol, trade_date=trade_date,
-                                trade_start_date=trade_start_date, **kwargs)
+    trades, metrics = backtest(
+        df, symbol=symbol, trade_date=trade_date,
+        trade_start_date=trade_start_date, **kwargs
+    )
 
-    closed = len(trades[trades['status'].isin(['WIN','LOSS'])]) if not trades.empty else 0
+    closed = len(trades[trades["status"].isin(["WIN", "LOSS"])]) if not trades.empty else 0
     print(f"\n  Results: {len(trades)} trades ({closed} closed)")
     print_metrics(metrics)
 
