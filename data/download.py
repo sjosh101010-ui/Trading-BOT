@@ -9,8 +9,16 @@ from datetime import datetime, timezone
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 
+BINANCE_PAIRS = {
+    "BTCUSD": "BTCUSDT",
+    "ETHUSD": "ETHUSDT",
+    "XRPUSD": "XRPUSDT",
+}
+
 def fetch_binance_m5(symbol: str, bars: int = 300) -> pd.DataFrame:
-    pair = f"{symbol}USDT"
+    pair = BINANCE_PAIRS.get(symbol)
+    if pair is None:
+        raise ValueError(f"No Binance pair mapping for {symbol}")
     url = f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=5m&limit={bars}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
