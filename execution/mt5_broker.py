@@ -63,11 +63,19 @@ class MT5Broker:
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             return {"success": False, "error": "Cannot get tick"}
+
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return {"success": False, "error": "Cannot get symbol info"}
+        digits = info.digits
+        stop_level = info.trade_stops_level
+
         price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
+        point = info.point
 
         if sl_distance is not None:
-            min_sl = 0.00030
-            sl_distance = max(sl_distance, min_sl)
+            min_sl_pts = max(stop_level, 10) * point
+            sl_distance = max(sl_distance, min_sl_pts)
             sl_price = price - sl_distance if order_type == mt5.ORDER_TYPE_BUY else price + sl_distance
         if tp_distance is not None:
             tp_price = price + tp_distance if order_type == mt5.ORDER_TYPE_BUY else price - tp_distance
@@ -85,9 +93,9 @@ class MT5Broker:
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
         if sl_price is not None:
-            request["sl"] = round(sl_price, 5)
+            request["sl"] = round(sl_price, digits)
         if tp_price is not None:
-            request["tp"] = round(tp_price, 5)
+            request["tp"] = round(tp_price, digits)
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             return {"success": False, "error": f"MT5 error {result.retcode}: {result.comment}"}
