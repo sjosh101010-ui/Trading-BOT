@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 import yfinance as yf
 
 from analysis.feature_engineering import add_indicators
-from analysis.m5_scalper import compute_m5_score, check_price_divergence
+from analysis.m5_scalper import compute_m5_score
 from risk.lot_sizer import compute_lot_size_sim
 from execution.mt5_broker import MT5Broker
 from config import (
@@ -91,11 +91,20 @@ def fetch_m5(symbol, bars=300):
 
 def compute_rapid_signal(df):
     pa_score = compute_m5_score(df)
+    last = df.iloc[-1]
+    adx_val = float(last.get("adx", 0) or 0)
+    price = float(last["close"])
+    ema50 = float(last.get("ema_50", price))
+
     if abs(pa_score) < 0.01:
-        return None, pa_score, 0
-    if check_price_divergence(df, pa_score):
-        return None, pa_score, 0
-    return ("BUY" if pa_score > 0 else "SELL"), pa_score, 0
+        return None, pa_score, adx_val
+    if adx_val < 12:
+        return None, pa_score, adx_val
+    if pa_score > 0 and price <= ema50:
+        return None, pa_score, adx_val
+    if pa_score < 0 and price >= ema50:
+        return None, pa_score, adx_val
+    return ("BUY" if pa_score > 0 else "SELL"), pa_score, adx_val
 
 
 def open_trade(symbol, direction, pa_score, adx_val, df, candle_time):

@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 
 import yfinance as yf
 from analysis.feature_engineering import add_indicators
-from analysis.m5_scalper import compute_m5_score, check_price_divergence
+from analysis.m5_scalper import compute_m5_score
 from risk.lot_sizer import compute_lot_size_sim
 from execution.sim_broker import SimBroker
 from config import (
@@ -113,12 +113,18 @@ def print_daily(broker, daily_trades, daily_start, session_start):
 
 def compute_rapid_signal(df):
     pa_score = compute_m5_score(df)
-    adx_val = float(df.iloc[-1].get("adx", 0) or 0)
+    last = df.iloc[-1]
+    adx_val = float(last.get("adx", 0) or 0)
+    price = float(last["close"])
+    ema50 = float(last.get("ema_50", price))
 
     if abs(pa_score) < 0.01:
         return "SKIP", pa_score, adx_val
-
-    if check_price_divergence(df, pa_score):
+    if adx_val < 12:
+        return "SKIP", pa_score, adx_val
+    if pa_score > 0 and price <= ema50:
+        return "SKIP", pa_score, adx_val
+    if pa_score < 0 and price >= ema50:
         return "SKIP", pa_score, adx_val
 
     direction = "BUY" if pa_score > 0 else "SELL"

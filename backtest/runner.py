@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from analysis.feature_engineering import add_indicators, compute_trend_score
 from analysis.price_action import compute_pa_score, detect_sr_zone
-from analysis.m5_scalper import compute_m5_score
+from analysis.m5_scalper import compute_m5_score, check_price_divergence
 
 from analysis.mean_reversion import compute_mr_score
 from analysis.ml_model import predict, XGB_SYMBOLS
@@ -255,13 +255,9 @@ def backtest(
             last = window.iloc[-1]
             price = last["close"]
             ema50 = last.get("ema_50", price)
-            ema21 = last.get("ema_21", price)
             atr = float(current["atr"]) if current["atr"] > 0 else 0.001
             if atr <= 0:
                 continue
-
-            is_uptrend = price > ema50
-            is_downtrend = price < ema50
 
             if abs(pa_score) < RAPID_PA_THRESHOLD:
                 continue
