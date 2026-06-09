@@ -30,7 +30,6 @@ class MT5Broker:
         return {
             "balance": info.balance,
             "equity": info.equity,
-            "open_trades": info.positions,
             "currency": info.currency,
         }
 
