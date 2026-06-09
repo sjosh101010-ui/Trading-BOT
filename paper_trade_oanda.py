@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 import yfinance as yf
 
 from analysis.feature_engineering import add_indicators
-from analysis.m5_scalper import compute_m5_score, check_price_divergence
+from analysis.m5_scalper import compute_m5_score_forex, check_price_divergence
 from risk.lot_sizer import compute_lot_size_sim
 from execution.oanda_broker import OANDABroker
 from config import (
@@ -66,7 +66,7 @@ def fetch_m5(symbol, bars=300):
     return df.tail(bars)
 
 def compute_rapid_signal(df):
-    pa_score = compute_m5_score(df)
+    pa_score = compute_m5_score_forex(df)
     adx_val = df.iloc[-1].get("adx", 0) or 0
     if abs(pa_score) < 0.01:
         return None, pa_score, 0

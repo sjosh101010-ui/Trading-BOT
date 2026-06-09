@@ -15,6 +15,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 CHUNK_SIZE = 20
 SESSION_START = 1
 SESSION_END = 10
+MAX_RETRIES = 3
 
 
 def parse_args():
@@ -33,11 +34,17 @@ def download_hour(symbol: str, dt: datetime) -> list[dict] | None:
         day=dt.day,
         hour=dt.hour,
     )
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        if resp.status_code != 200 or len(resp.content) == 0:
-            return None
-    except requests.RequestException:
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=30)
+            if resp.status_code != 200 or len(resp.content) == 0:
+                return None
+            break
+        except requests.RequestException:
+            if attempt == MAX_RETRIES - 1:
+                return None
+            continue
+    else:
         return None
 
     try:
@@ -84,25 +91,40 @@ def download_day(symbol: str, day: datetime) -> pd.DataFrame:
     return ohlcv[["symbol", "open", "high", "low", "close", "volume"]].dropna()
 
 
+def download_day_batch(symbol, days):
+    results = []
+    for d in days:
+        ohlcv = download_day(symbol, d)
+        results.append(ohlcv)
+    return results
+
+
 def main():
     args = parse_args()
     symbol = args.symbol
     start = datetime.strptime(args.start, "%Y-%m-%d")
     end = datetime.strptime(args.end, "%Y-%m-%d")
 
-    all_candles = []
+    all_days = []
     cur = start
-    total_days = (end - start).days + 1
-    day_count = 0
-
     while cur <= end:
-        day_start = cur.replace(hour=0, minute=0, second=0, microsecond=0)
-        ohlcv = download_day(symbol, day_start)
+        all_days.append(cur.replace(hour=0, minute=0, second=0, microsecond=0))
+        cur += timedelta(days=1)
+
+    total_days = len(all_days)
+    BATCH_SIZE = 1
+    all_candles = []
+    done = 0
+
+    for batch_start in range(0, total_days, BATCH_SIZE):
+        batch = all_days[batch_start:batch_start + BATCH_SIZE]
+        day = batch[0]
+        ohlcv = download_day(symbol, day)
         if not ohlcv.empty:
             all_candles.append(ohlcv)
-        day_count += 1
-        print(f"\r  Day {day_count}/{total_days} ({day_start.date()}) — {len(ohlcv)} candles", end="", flush=True)
-        cur += timedelta(days=1)
+        done += 1
+        pct = done / total_days * 100
+        print(f"\r  {pct:.0f}% ({done}/{total_days} days, latest: {day.date()})", end="", flush=True)
 
     print()
     if not all_candles:

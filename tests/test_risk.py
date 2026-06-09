@@ -34,8 +34,8 @@ def test_spread_guard():
 
 def test_max_positions():
     assert can_open_trade(0) is True
-    assert can_open_trade(2) is True
-    assert can_open_trade(3) is False
+    assert can_open_trade(6) is True
+    assert can_open_trade(7) is False
 
 
 def test_drawdown_guard():

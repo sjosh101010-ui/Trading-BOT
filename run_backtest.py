@@ -59,8 +59,8 @@ def main():
     parser.add_argument("--balance", type=float, default=100.0, help="Initial balance")
     parser.add_argument("--download", type=str, help="Download data for symbol")
     parser.add_argument("--days", type=int, default=30, help="Days of data to download")
-    parser.add_argument("--strategy", type=str, default="m5", choices=["m5", "pa", "hc", "mr", "rapid"],
-                        help="m5=scalper (default), pa=candlestick patterns, hc=high conviction, mr=mean reversion")
+    parser.add_argument("--strategy", type=str, default="m5", choices=["m5", "pa", "hc", "mr", "rapid", "tf"],
+                        help="m5=scalper (default), pa=candlestick patterns, hc=high conviction, mr=mean reversion, tf=trend follow")
     parser.add_argument("--date", type=str, help="Trade only on this date (YYYY-MM-DD)")
     parser.add_argument("--from-date", type=str, help="Start cumulative backtest from this date (YYYY-MM-DD)")
     args = parser.parse_args()
@@ -82,16 +82,17 @@ def main():
 
     elif args.csv:
         if args.date:
-            target = pd.Timestamp(args.date, tz="UTC")
+            target = pd.Timestamp(args.date)
             full = pd.read_csv(args.csv, parse_dates=True, index_col=0)
             full = full[full.index >= target - pd.Timedelta(days=3)]
             full = full[full.index <= target + pd.Timedelta(days=1)]
             trades, metrics = run_backtest(df=full, symbol=args.symbol, initial_balance=args.balance, trade_date=target, **kwargs)
         elif args.from_date:
-            start = pd.Timestamp(args.from_date, tz="UTC")
+            start = pd.Timestamp(args.from_date)
             full = pd.read_csv(args.csv, parse_dates=True, index_col=0)
             full = full[full.index >= start - pd.Timedelta(days=3)]
             trades, metrics = run_backtest(df=full, symbol=args.symbol, initial_balance=args.balance, trade_start_date=start, **kwargs)
+
         else:
             trades, metrics = run_backtest(csv_path=args.csv, symbol=args.symbol, initial_balance=args.balance, **kwargs)
 

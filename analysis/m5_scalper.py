@@ -22,7 +22,7 @@ def compute_m5_score(df: pd.DataFrame) -> float:
     vol_series = df["atr"]
     vol_median = vol_series.rolling(50).median().iloc[-1] if n >= 50 else atr_val
     vol_ratio = atr_val / vol_median if vol_median > 0 else 1.0
-    if vol_ratio < 0.6 or vol_ratio > 2.0:
+    if vol_ratio < 0.4 or vol_ratio > 3.0:
         return 0.0
 
     max_range = (df["high"].iloc[-20:].max() - df["low"].iloc[-20:].min()) / atr_val if n >= 20 else 5.0
@@ -65,6 +65,75 @@ def compute_m5_score(df: pd.DataFrame) -> float:
             score -= 0.15
         elif all(cls.iloc[i] < cls.iloc[i-1] for i in range(1, len(cls))):
             score += 0.15
+
+    return round(max(-1.0, min(1.0, score)), 4)
+
+
+def compute_m5_score_forex(df: pd.DataFrame) -> float:
+    """
+    Forex-adapted additive PA scorer.
+
+    Changes from original:
+      1. extend threshold lowered: 0.8 → 0.5
+      2. 5-bar momentum filter removed
+      3. vol ratio widened: 0.6-2.0 → 0.4-2.5
+      4. Scoring is fully additive (not mutually exclusive):
+           RSI oversold/overbought      → ±0.25
+           Extension > 0.5×ATR          → ±0.25
+           Range position 15%/85%       → ±0.25
+           Vol ratio in 0.4-2.5         → ±0.25 (boosts signal direction)
+         Max |score| = 1.0, entry ≥ 0.50
+    """
+    last = df.iloc[-1]
+    price = last["close"]
+    atr_val = last["atr"]
+    if atr_val <= 0:
+        return 0.0
+
+    n = len(df)
+    if n < 3:
+        return 0.0
+
+    rsi = last.get("rsi", 50)
+
+    ret1 = (price - df.iloc[-2]["close"]) / atr_val
+    ret2 = (df.iloc[-2]["close"] - df.iloc[-3]["close"]) / atr_val
+    extend = ret1 + ret2 * 0.5
+
+    vol_series = df["atr"]
+    vol_median = vol_series.rolling(50).median().iloc[-1] if n >= 50 else atr_val
+    vol_ratio = atr_val / vol_median if vol_median > 0 else 1.0
+    if vol_ratio < 0.4 or vol_ratio > 3.0:
+        return 0.0
+
+    max_range = (df["high"].iloc[-20:].max() - df["low"].iloc[-20:].min()) / atr_val if n >= 20 else 5.0
+    pos = (price - df["low"].iloc[-20:].min()) / (df["high"].iloc[-20:].max() - df["low"].iloc[-20:].min()) if n >= 20 and max_range > 0 else 0.5
+
+    score = 0.0
+
+    # Condition 1: RSI
+    if rsi < 30:
+        score += 0.25
+    elif rsi > 70:
+        score -= 0.25
+
+    # Condition 2: Extension
+    if extend < -0.5:
+        score += 0.25
+    elif extend > 0.5:
+        score -= 0.25
+
+    # Condition 3: Range position
+    if pos < 0.15:
+        score += 0.25
+    elif pos > 0.85:
+        score -= 0.25
+
+    # Condition 4: Vol ratio normal → boosts existing lean
+    if score > 0:
+        score += 0.25
+    elif score < 0:
+        score -= 0.25
 
     return round(max(-1.0, min(1.0, score)), 4)
 

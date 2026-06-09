@@ -10,7 +10,7 @@ BUY_THRESHOLD = 0.20
 SELL_THRESHOLD = -0.20
 SENTIMENT_OVERRIDE_THRESH = 0.60
 REQUIRE_ML_PA_CONFLUENCE = False
-ML_CONFIDENCE_GATE = 0.0
+ML_CONFIDENCE_GATE = 0.25
 
 W_PA, W_ML, W_SENT = 0.70, 0.15, 0.15
 MAX_DAILY_TRADES = 999
@@ -18,7 +18,7 @@ MAX_DAILY_LOSS_PCT = 0.05
 
 MIN_LOT = 0.01
 MAX_LOT = 10.0
-MAX_OPEN_POSITIONS = 3
+MAX_OPEN_POSITIONS = 7
 MAX_DRAWDOWN_PCT = 0.10
 NEWS_BLACKOUT_MINUTES = 5
 
@@ -42,10 +42,27 @@ def contract_size(symbol: str) -> int:
     return CONTRACT_SIZE.get(symbol, 100_000)
 
 ATR_MULT = {
-    "BTCUSD": {"sl": 1.0, "tp": 2.5},
-    "EURUSD": {"sl": 1.0, "tp": 2.5},
-    "USDILS": {"sl": 1.0, "tp": 2.5},
-    "USDZAR": {"sl": 1.0, "tp": 2.5},
+    "BTCUSD": {"sl": 1.0, "tp": 1.5},
+    "EURUSD": {"sl": 1.0, "tp": 1.5},
+    "USDILS": {"sl": 1.0, "tp": 1.5},
+    "USDZAR": {"sl": 1.0, "tp": 1.5},
+}
+
+SYMBOL_SPREAD_MAP = {
+    "BTCUSD": 5.0,
+    "EURUSD": 0.3,
+    "GBPUSD": 0.5,
+    "USDILS": 40.0,
+    "USDZAR": 60.0,
+}
+
+STRATEGY_SESSION_MAP = {
+    "m5": {"start": "07:00", "end": "21:00"},
+    "pa": {"start": "07:00", "end": "21:00"},
+    "hc": {"start": "12:00", "end": "19:00"},
+    "mr": {"start": "21:00", "end": "07:00"},
+    "rapid": {"start": "07:00", "end": "19:00"},
+    "tf": {"start": "12:00", "end": "21:00"},
 }
 
 LSTM_SEQ_LEN = 30
@@ -65,14 +82,14 @@ MAX_SPREAD = {
 }
 
 BASE_RISK_PCT = {"BTCUSD": 0.005, "EURUSD": 1.5, "USDILS": 0.003, "USDZAR": 0.003}
-MAX_RISK_PCT = {"BTCUSD": 0.01, "EURUSD": 1.5, "USDILS": 0.008, "USDZAR": 0.008}
+MAX_RISK_PCT = {"BTCUSD": 0.02, "EURUSD": 3.0, "USDILS": 0.008, "USDZAR": 0.008}
 
 INITIAL_BALANCE = 100.0
-RISK_SCALE_FACTOR = 0.5
+RISK_SCALE_FACTOR = 1.5
 
 HC_PA_SCORE_THRESHOLD = 0.40
-HC_ML_PROB_BUY = 0.70
-HC_ML_PROB_SELL = 0.30
+HC_ML_PROB_BUY = 0.55
+HC_ML_PROB_SELL = 0.45
 HC_SL_ATR_MULT = 0.8
 HC_TP_ATR_MULT_DEFAULT = 1.5
 HC_TP_ATR_MULT_NEAR_SR = 2.0
@@ -81,11 +98,12 @@ MAX_RISK_PCT_PER_TRADE = 0.10
 
 RAPID_SL_MULT = 0.5
 RAPID_TP_MULT = {"BTCUSD": 1.0, "EURUSD": 1.5, "GBPUSD": 2.0, "AUDUSD": 1.5, "USDCAD": 2.0, "NZDUSD": 2.0, "USDILS": 2.0, "USDZAR": 2.0}
-RAPID_PA_THRESHOLD = 0.5
-RAPID_BE_ATR_MULT = 0
+RAPID_PA_THRESHOLD = 0.30
+RAPID_BE_ATR_MULT = 0.5
 
 LEVERAGE = 5
-SPREAD_PIPS = 1.0
+SPREAD_PIPS = 0.3
 SLIPPAGE_PIPS = 0.0
 DB_PATH = "logs/trades.db"
 MODELS_DIR = "models"
+MAX_STRATEGIES_PER_SYMBOL = 2

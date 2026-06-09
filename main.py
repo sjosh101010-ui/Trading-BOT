@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 
 import yfinance as yf
 from analysis.feature_engineering import add_indicators
-from analysis.m5_scalper import compute_m5_score
+from analysis.m5_scalper import compute_m5_score_forex
 from risk.lot_sizer import compute_lot_size_sim
 from execution.sim_broker import SimBroker
 from config import (
@@ -113,7 +113,7 @@ def print_daily(broker, daily_trades, daily_start, session_start):
 
 
 def compute_rapid_signal(df):
-    pa_score = compute_m5_score(df)
+    pa_score = compute_m5_score_forex(df)
     adx_val = float(df.iloc[-1].get("adx", 0) or 0)
     if abs(pa_score) < RAPID_PA_THRESHOLD:
         return "SKIP", pa_score, adx_val
@@ -129,7 +129,8 @@ def run():
     current_trade_day = None
 
     last_closed_candle_time = None
-    traded_candle_times = set()
+    last_trade_time = None
+    TRADE_COOLDOWN_SECONDS = 900
 
     print(f"\n{'='*TERM_WIDTH}")
     print(f"  Live Rapid Monitor Started")
@@ -178,38 +179,40 @@ def run():
             sl_price = entry_price
             tp_price = entry_price
             direction = "SKIP"
-            pa_score = compute_m5_score(df)
+            pa_score = compute_m5_score_forex(df)
             adx_val = float(df.iloc[-1].get("adx", 0) or 0)
             has_pos = bool(broker.get_open_positions(SYMBOL))
 
-            if not has_pos and new_candle_closed and closed_candle_time not in traded_candle_times:
-                signal_window = df.iloc[:-1]
-                direction, pa_score, adx_val = compute_rapid_signal(signal_window)
+            if not has_pos and new_candle_closed:
+                cooldown_ok = last_trade_time is None or (current_utc - last_trade_time).total_seconds() >= TRADE_COOLDOWN_SECONDS
+                if cooldown_ok:
+                    signal_window = df.iloc[:-1]
+                    direction, pa_score, adx_val = compute_rapid_signal(signal_window)
 
-                if direction != "SKIP":
-                    atr = float(df.iloc[-2].get("atr", 0.001)) or 0.001
-                    if atr <= 0:
-                        atr = 0.001
+                    if direction != "SKIP":
+                        atr = float(df.iloc[-2].get("atr", 0.001)) or 0.001
+                        if atr <= 0:
+                            atr = 0.001
 
-                    tp_mult = RAPID_TP_MULT if isinstance(RAPID_TP_MULT, (int, float)) else RAPID_TP_MULT.get(SYMBOL, 2.0)
-                    if direction == "BUY":
-                        sl_price = entry_price - RAPID_SL_MULT * atr
-                        tp_price = entry_price + tp_mult * atr
-                        be_trigger = entry_price + RAPID_BE_ATR_MULT * atr if RAPID_BE_ATR_MULT > 0 else None
-                    else:
-                        sl_price = entry_price + RAPID_SL_MULT * atr
-                        tp_price = entry_price - tp_mult * atr
-                        be_trigger = entry_price - RAPID_BE_ATR_MULT * atr if RAPID_BE_ATR_MULT > 0 else None
+                        tp_mult = RAPID_TP_MULT if isinstance(RAPID_TP_MULT, (int, float)) else RAPID_TP_MULT.get(SYMBOL, 2.0)
+                        if direction == "BUY":
+                            sl_price = entry_price - RAPID_SL_MULT * atr
+                            tp_price = entry_price + tp_mult * atr
+                            be_trigger = entry_price + RAPID_BE_ATR_MULT * atr if RAPID_BE_ATR_MULT > 0 else None
+                        else:
+                            sl_price = entry_price + RAPID_SL_MULT * atr
+                            tp_price = entry_price - tp_mult * atr
+                            be_trigger = entry_price - RAPID_BE_ATR_MULT * atr if RAPID_BE_ATR_MULT > 0 else None
 
-                    sl_price = round(sl_price, 5)
-                    tp_price = round(tp_price, 5)
-                    if be_trigger:
-                        be_trigger = round(be_trigger, 5)
-                    sl_pips = abs(entry_price - sl_price) / PS if PS > 0 else 0
+                        sl_price = round(sl_price, 5)
+                        tp_price = round(tp_price, 5)
+                        if be_trigger:
+                            be_trigger = round(be_trigger, 5)
+                        sl_pips = abs(entry_price - sl_price) / PS if PS > 0 else 0
 
-                    daily_loss_pct = (daily_start_balance - broker.balance) / daily_start_balance if daily_start_balance > 0 else 0
-                    if daily_trades < MAX_DAILY_TRADES and daily_loss_pct < MAX_DAILY_LOSS_PCT:
-                        lot = compute_lot_size_sim(SYMBOL, broker.balance, sl_pips, min(1.0, abs(pa_score)))
+                        daily_loss_pct = (daily_start_balance - broker.balance) / daily_start_balance if daily_start_balance > 0 else 0
+                        if daily_trades < MAX_DAILY_TRADES and daily_loss_pct < MAX_DAILY_LOSS_PCT:
+                            lot = compute_lot_size_sim(SYMBOL, broker.balance, sl_pips, min(1.0, abs(pa_score)))
 
             print_signal(direction, pa_score, adx_val, lot, sl_price, tp_price, entry_price)
             print()
@@ -232,7 +235,7 @@ def run():
                 result = broker.open_trade(ts, lot, sl_price, tp_price, entry_price=entry_price, be_trigger=be_trigger)
                 if result["success"]:
                     daily_trades += 1
-                    traded_candle_times.add(closed_candle_time)
+                    last_trade_time = current_utc
                     logging.info(f"[RAPID] Trade opened: {direction} {lot}L @ {entry_price:.5f}")
                     print(f"  >>> RAPID TRADE EXECUTED: {direction} {lot}L <<<")
 
