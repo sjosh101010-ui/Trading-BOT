@@ -11,12 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
-import yfinance as yf
 
 from analysis.feature_engineering import add_indicators
 from analysis.m5_scalper import compute_m5_score
 from risk.lot_sizer import compute_lot_size_sim
 from execution.mt5_broker import MT5Broker
+from data.download import fetch_binance_m5
 from config import (
     SYMBOLS, RAPID_SL_MULT, RAPID_TP_MULT, RAPID_PA_THRESHOLD,
     SPREAD_PIPS, LEVERAGE, INITIAL_BALANCE, RAPID_BE_ATR_MULT,
@@ -74,19 +74,15 @@ def append_trade_csv(trade):
 
 
 def fetch_m5(symbol, bars=300):
-    yahoo_map = {"BTCUSD": "BTC-USD", "EURUSD": "EURUSD=X", "USDZAR": "USDZAR=X"}
-    ticker = yahoo_map.get(symbol, f"{symbol}=X")
-    df = yf.download(ticker, period="5d", interval="5m", progress=False)
-    if df.empty:
+    try:
+        df = fetch_binance_m5(symbol, bars)
+        if df is None or df.empty:
+            return None
+        df["volume"] = df["volume"].clip(lower=1)
+        return df.tail(bars)
+    except Exception as e:
+        print(f"  Fetch error: {e}")
         return None
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.rename(columns=str.lower)
-    df.index.name = "time"
-    df.index = pd.to_datetime(df.index)
-    df = df[["open", "high", "low", "close", "volume"]].dropna()
-    df["volume"] = df["volume"].clip(lower=1)
-    return df.tail(bars)
 
 
 def compute_rapid_signal(df):

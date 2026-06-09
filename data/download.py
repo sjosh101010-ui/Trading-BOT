@@ -1,11 +1,36 @@
-import sys
+import sys, json, urllib.request
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yfinance as yf
 import pandas as pd
+from datetime import datetime, timezone
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
+
+
+def fetch_binance_m5(symbol: str, bars: int = 300) -> pd.DataFrame:
+    pair = f"{symbol}USDT"
+    url = f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=5m&limit={bars}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        raise RuntimeError(f"Binance fetch failed for {pair}: {e}")
+    rows = []
+    for k in data:
+        rows.append({
+            "time": datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc),
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+        })
+    df = pd.DataFrame(rows).set_index("time")
+    df.index.name = "time"
+    return df
 
 
 def download_forex_m5(symbol: str, days: int = 14) -> pd.DataFrame:
