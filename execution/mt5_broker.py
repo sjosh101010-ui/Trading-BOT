@@ -65,6 +65,8 @@ class MT5Broker:
         price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
 
         if sl_distance is not None:
+            min_sl = 0.00020  # 2 pips minimum for Vantage
+            sl_distance = max(sl_distance, min_sl)
             sl_price = price - sl_distance if order_type == mt5.ORDER_TYPE_BUY else price + sl_distance
         if tp_distance is not None:
             tp_price = price + tp_distance if order_type == mt5.ORDER_TYPE_BUY else price - tp_distance
@@ -79,7 +81,7 @@ class MT5Broker:
             "magic": 123456,
             "comment": "rapid_scalper",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_RETURN,
         }
         if sl_price is not None:
             request["sl"] = round(sl_price, 5)
