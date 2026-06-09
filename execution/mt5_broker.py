@@ -59,6 +59,7 @@ class MT5Broker:
                           sl_distance=None, tp_distance=None):
         self._ensure_init()
         order_type = mt5.ORDER_TYPE_BUY if side.upper() == "BUY" else mt5.ORDER_TYPE_SELL
+        mt5.symbol_select(symbol, True)
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             return {"success": False, "error": "Cannot get tick"}
@@ -81,7 +82,6 @@ class MT5Broker:
             "magic": 123456,
             "comment": "rapid_scalper",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_RETURN,
         }
         if sl_price is not None:
             request["sl"] = round(sl_price, 5)
