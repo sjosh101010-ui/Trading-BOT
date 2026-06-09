@@ -1,44 +1,118 @@
 import MetaTrader5 as mt5
+import os
+from dotenv import load_dotenv
 
-from signals.signal_types import TradeSignal
-from config import MAGIC_NUMBER
+load_dotenv()
 
-
-def open_trade(
-    signal: TradeSignal,
-    lot: float,
-    sl: float,
-    tp: float,
-) -> dict:
-    tick = mt5.symbol_info_tick(signal.symbol)
-    if tick is None:
-        return {"success": False, "ticket": None, "error": "No tick data"}
-
-    price = tick.ask if signal.direction == "BUY" else tick.bid
-    order_type = mt5.ORDER_TYPE_BUY if signal.direction == "BUY" else mt5.ORDER_TYPE_SELL
-
-    request = {
-        "action":    mt5.TRADE_ACTION_DEAL,
-        "symbol":    signal.symbol,
-        "volume":    lot,
-        "type":      order_type,
-        "price":     price,
-        "sl":        sl,
-        "tp":        tp,
-        "deviation": 10,
-        "magic":     MAGIC_NUMBER,
-        "comment":   f"AI_bot_{signal.direction}",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
-    }
-
-    result = mt5.order_send(request)
-    if result.retcode == mt5.TRADE_RETCODE_DONE:
-        return {"success": True, "ticket": result.order, "error": ""}
-    else:
-        return {"success": False, "ticket": None, "error": str(result.comment)}
+MT5_LOGIN = int(os.getenv("MT5_LOGIN", 0))
+MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER = os.getenv("MT5_SERVER", "VantageInternational-Demo")
 
 
-def get_open_positions(symbol: str = None) -> list:
-    positions = mt5.positions_get(symbol=symbol) or []
-    return [p for p in positions if p.magic == MAGIC_NUMBER]
+class MT5Broker:
+    def __init__(self):
+        self.initialized = False
+        self._ensure_init()
+
+    def _ensure_init(self):
+        if not mt5.initialize():
+            raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
+        self.initialized = True
+        if MT5_LOGIN and MT5_PASSWORD:
+            if not mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
+                raise RuntimeError(f"MT5 login failed: {mt5.last_error()}")
+
+    def get_account_info(self):
+        self._ensure_init()
+        info = mt5.account_info()
+        if info is None:
+            return None
+        return {
+            "balance": info.balance,
+            "equity": info.equity,
+            "open_trades": info.positions,
+            "currency": info.currency,
+        }
+
+    def get_open_positions(self, symbol=None):
+        self._ensure_init()
+        if symbol:
+            pos = mt5.positions_get(symbol=symbol)
+        else:
+            pos = mt5.positions_get()
+        if pos is None:
+            return {}
+        result = {}
+        for p in pos:
+            result[p.ticket] = {
+                "id": p.ticket,
+                "symbol": p.symbol,
+                "direction": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
+                "volume": p.volume,
+                "openPrice": p.price_open,
+                "sl": p.sl,
+                "tp": p.tp,
+                "profit": p.profit,
+            }
+        return result
+
+    def open_market_order(self, symbol, side, volume, sl_price=None, tp_price=None):
+        self._ensure_init()
+        order_type = mt5.ORDER_TYPE_BUY if side.upper() == "BUY" else mt5.ORDER_TYPE_SELL
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": volume,
+            "type": order_type,
+            "price": mt5.symbol_info_tick(symbol).ask if order_type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).bid,
+            "deviation": 10,
+            "magic": 123456,
+            "comment": "rapid_scalper",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        if sl_price is not None:
+            request["sl"] = round(sl_price, 5)
+        if tp_price is not None:
+            request["tp"] = round(tp_price, 5)
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            return {"success": False, "error": f"MT5 error {result.retcode}: {result.comment}"}
+        return {
+            "success": True,
+            "ticket": result.order,
+            "price": result.price,
+            "volume": volume,
+        }
+
+    def close_position(self, symbol, volume, side, close_by_id):
+        self._ensure_init()
+        position = mt5.positions_get(ticket=close_by_id)
+        if not position:
+            return False
+        pos = position[0]
+        order_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": volume,
+            "type": order_type,
+            "position": close_by_id,
+            "price": mt5.symbol_info_tick(symbol).bid if order_type == mt5.ORDER_TYPE_SELL else mt5.symbol_info_tick(symbol).ask,
+            "deviation": 10,
+            "magic": 123456,
+            "comment": "rapid_close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        result = mt5.order_send(request)
+        return result.retcode == mt5.TRADE_RETCODE_DONE
+
+    def get_digits(self, symbol):
+        self._ensure_init()
+        info = mt5.symbol_info(symbol)
+        return info.digits if info else 5
+
+    @staticmethod
+    def pip_size(symbol):
+        return 0.0001
